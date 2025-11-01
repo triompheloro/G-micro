@@ -19,6 +19,10 @@ import android.util.Size;
 import android.widget.Button;
 import android.widget.Toast;
 
+import com.example.projet.api.OpenAIManager;
+import com.example.projet.data.ConversationBuffer;
+import com.example.projet.data.Message;
+
 import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -43,6 +47,9 @@ import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "MainActivity";
+    private static final String OPENAI_API_KEY = ""; // Remplacez par votre clé API
+
     private Button btnStart, btnStop;
     private PreviewView viewFinder;
     private SpeechRecognizer speechRecognizer;
@@ -54,15 +61,24 @@ public class MainActivity extends AppCompatActivity {
     private Handler mainHandler;
     private TextToSpeech tts;
 
+    // Nouvelles variables pour OpenAI et la gestion des conversations
+    private OpenAIManager openAIManager;
+    private ConversationBuffer conversationBuffer;
+    private boolean isListening = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
+        // Initialisation de OpenAI et du buffer de conversation
+        openAIManager = new OpenAIManager(OPENAI_API_KEY);
+        conversationBuffer = new ConversationBuffer();
+
         tts = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
-                int result = tts.setLanguage(Locale.ENGLISH);
+                int result = tts.setLanguage(Locale.FRANCE);
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     Log.e("TTS", "Langue non supportée");
                 }
@@ -104,25 +120,25 @@ public class MainActivity extends AppCompatActivity {
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
             @Override public void onReadyForSpeech(Bundle params) {
+                isListening = true;
                 Toast.makeText(MainActivity.this, "Prêt à écouter", LENGTH_SHORT).show();
             }
             @Override public void onBeginningOfSpeech() {}
             @Override public void onRmsChanged(float rmsdB) {}
             @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {}
+            @Override public void onEndOfSpeech() {
+                isListening = false;
+            }
             @Override public void onError(int error) {
+                isListening = false;
                 Toast.makeText(MainActivity.this, "Veuillez répéter", LENGTH_LONG).show();
             }
             @Override public void onResults(Bundle results) {
+                isListening = false;
                 ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (matches != null && !matches.isEmpty()) {
                     String recognizedText = matches.get(0);
-                    if (commandesAutorises.contains(recognizedText)) {
-                        Toast.makeText(MainActivity.this, "Commande reconnue", LENGTH_SHORT).show();
-                        captureFrameAndDetect();
-                    } else {
-                        Toast.makeText(MainActivity.this, "Commande non reconnue", LENGTH_SHORT).show();
-                    }
+                    processUserInput(recognizedText);
                 }
             }
             @Override public void onPartialResults(Bundle partialResults) {}
@@ -167,6 +183,10 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
         }
     }
 
@@ -225,8 +245,46 @@ public class MainActivity extends AppCompatActivity {
                 texte.append(", ");
             }
         }
+        // Ajouter la réponse au buffer de conversation
+        Message assistantMessage = new Message("assistant", texte.toString());
+        conversationBuffer.addMessage(assistantMessage);
+        
         // Utilise TTS pour parler
         tts.speak(texte.toString(), TextToSpeech.QUEUE_FLUSH, null, null);
+    }
+
+    private void processUserInput(String userInput) {
+        // Ajouter l'entrée utilisateur au buffer
+        Message userMessage = new Message("user", userInput);
+        conversationBuffer.addMessage(userMessage);
+
+        // Analyser la commande avec OpenAI
+        openAIManager.analyzeCommand(userInput, conversationBuffer.getContextForAI(), 
+            new OpenAIManager.CommandAnalysisCallback() {
+                @Override
+                public void onAnalysisComplete(String response, boolean isDetection) {
+                    runOnUiThread(() -> {
+                        if (isDetection) {
+                            // Si c'est une demande de détection, activer ML Kit
+                            captureFrameAndDetect();
+                        } else {
+                            // Sinon, c'est une conversation normale
+                            Message assistantMessage = new Message("assistant", response);
+                            conversationBuffer.addMessage(assistantMessage);
+                            
+                            // Répondre vocalement
+                            tts.speak(response, TextToSpeech.QUEUE_FLUSH, null, null);
+                        }
+                    });
+                }
+
+                @Override
+                public void onError(String error) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "Erreur: " + error, Toast.LENGTH_LONG).show();
+                    });
+                }
+            });
     }
 
     private void analyzeSingleImage(final ImageProxy imageProxy) {

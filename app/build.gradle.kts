@@ -48,4 +48,20 @@ dependencies {
 
     // ML Kit Image Labeling (au lieu d'Object Detection)
     implementation("com.google.mlkit:image-labeling:17.0.8")
+
+    // Retrofit pour les appels API REST
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+
+    // OkHttp pour la gestion des requêtes HTTP
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
+
+    // GSON pour la sérialisation/désérialisation JSON
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // Room pour le stockage local
+    implementation("androidx.room:room-runtime:2.6.0")
+    implementation("androidx.room:room-ktx:2.6.0")
+    annotationProcessor("androidx.room:room-compiler:2.6.0")
 }
