@@ -6,7 +6,6 @@ import static android.widget.Toast.LENGTH_SHORT;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -18,10 +17,6 @@ import android.util.Log;
 import android.util.Size;
 import android.widget.Button;
 import android.widget.Toast;
-
-import com.example.projet.api.OpenAIManager;
-import com.example.projet.data.ConversationBuffer;
-import com.example.projet.data.Message;
 
 import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
@@ -36,153 +31,246 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.mlkit.vision.common.InputImage;
-import com.google.mlkit.vision.label.ImageLabel;
-import com.google.mlkit.vision.label.ImageLabeler;
-import com.google.mlkit.vision.label.ImageLabeling;
-import com.google.mlkit.vision.label.defaults.ImageLabelerOptions;
+import com.example.projet.api.OpenAIManager;
+import com.example.projet.data.ConversationBuffer;
+import com.example.projet.data.Message;
+import com.example.projet.ml.ObjectDetector;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
-    private static final String OPENAI_API_KEY = ""; // Remplacez par votre clé API
+    private static final int PERMISSION_REQUEST_CODE = 123;
+    private static final String OPENAI_API_KEY = "";  // Remplacez par votre clé API OpenAI
 
-    private Button btnStart, btnStop;
+
+
+    private Button btnStart;
+    private Button btnStop;
     private PreviewView viewFinder;
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
     private ImageCapture imageCapture;
-
-    // Utilisez ImageLabeler au lieu d'ObjectDetector
-    private ImageLabeler labeler;
     private Handler mainHandler;
     private TextToSpeech tts;
-
-    // Nouvelles variables pour OpenAI et la gestion des conversations
+    private ObjectDetector objectDetector;
     private OpenAIManager openAIManager;
     private ConversationBuffer conversationBuffer;
     private boolean isListening = false;
+    private boolean allPermissionsGranted = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
-        setContentView(R.layout.activity_main);
+        try {
+            super.onCreate(savedInstanceState);
+            EdgeToEdge.enable(this);
+            setContentView(R.layout.activity_main);
 
-        // Initialisation de OpenAI et du buffer de conversation
-        openAIManager = new OpenAIManager(OPENAI_API_KEY);
-        conversationBuffer = new ConversationBuffer();
+            setupViews();
+            setupOpenAI();
+            setupTTS();
+            setupObjectDetector();
+            checkPermissions();
 
-        tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) {
-                int result = tts.setLanguage(Locale.FRANCE);
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.e("TTS", "Langue non supportée");
-                }
-            } else {
-                Log.e("TTS", "Initialisation échouée");
+            if (allPermissionsGranted) {
+                startCamera();
+                setupSpeechRecognizer();
             }
-        });
+        } catch (Exception e) {
+            Log.e(TAG, "Erreur lors de l'initialisation de MainActivity: " + e.getMessage(), e);
+            Toast.makeText(this, "Erreur lors du démarrage: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
 
-        // Créez un Handler pour le thread principal
-        mainHandler = new Handler(Looper.getMainLooper());
-
-        // Initialisez l'Image Labeler pour avoir des labels précis
-        mainHandler.post(() -> {
-            ImageLabelerOptions options = new ImageLabelerOptions.Builder()
-                    .setConfidenceThreshold(0.5f)  // Seuil de confiance minimum (50%)
-                    .build();
-
-            labeler = ImageLabeling.getClient(options);
-            Log.d("ImageLabeling", "Labeler initialisé");
-        });
-
-        // configuration UI
+    private void setupViews() {
         btnStart = findViewById(R.id.button_start);
         btnStop = findViewById(R.id.button_stop);
         viewFinder = findViewById(R.id.viewFinder);
-
-        final List<String> commandesAutorises = new ArrayList<>(List.of("what is this","what is that","what do you see"));
-
-        // Vérification permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            checkAudioPermission();
-            checkCameraPermission();
-        }
-
-        // Démarre la caméra
-        startCamera();
-
-        // Config SpeechRecognizer
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizer.setRecognitionListener(new RecognitionListener() {
-            @Override public void onReadyForSpeech(Bundle params) {
-                isListening = true;
-                Toast.makeText(MainActivity.this, "Prêt à écouter", LENGTH_SHORT).show();
-            }
-            @Override public void onBeginningOfSpeech() {}
-            @Override public void onRmsChanged(float rmsdB) {}
-            @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {
-                isListening = false;
-            }
-            @Override public void onError(int error) {
-                isListening = false;
-                Toast.makeText(MainActivity.this, "Veuillez répéter", LENGTH_LONG).show();
-            }
-            @Override public void onResults(Bundle results) {
-                isListening = false;
-                ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                if (matches != null && !matches.isEmpty()) {
-                    String recognizedText = matches.get(0);
-                    processUserInput(recognizedText);
-                }
-            }
-            @Override public void onPartialResults(Bundle partialResults) {}
-            @Override public void onEvent(int eventType, Bundle params) {}
-        });
-
-        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
 
         btnStart.setOnClickListener(v -> startListening());
         btnStop.setOnClickListener(v -> stopListening());
     }
 
-    private void checkAudioPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 1);
+    private void setupOpenAI() {
+        openAIManager = new OpenAIManager(OPENAI_API_KEY);
+        conversationBuffer = new ConversationBuffer();
+    }
+
+    private void setupTTS() {
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                int result = tts.setLanguage(Locale.FRANCE);
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e(TAG, "Langue française non supportée");
+                    // Essayons le français canadien comme alternative
+                    result = tts.setLanguage(Locale.CANADA_FRENCH);
+                    if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        Log.e(TAG, "Aucune langue française disponible");
+                    }
+                }
+            } else {
+                Log.e(TAG, "Initialisation TTS échouée");
+            }
+        });
+    }
+
+    private void setupObjectDetector() {
+        mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(() -> {
+            objectDetector = new ObjectDetector(this);
+            Log.d(TAG, "Détecteur initialisé");
+        });
+    }
+
+    private void checkPermissions() {
+        String[] permissions = {
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.CAMERA,
+                Manifest.permission.INTERNET
+        };
+
+        List<String> permissionsNeeded = new ArrayList<>();
+        for (String permission : permissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(permission);
+            }
+        }
+
+        if (!permissionsNeeded.isEmpty()) {
+            ActivityCompat.requestPermissions(this,
+                permissionsNeeded.toArray(new String[0]),
+                PERMISSION_REQUEST_CODE);
+        } else {
+            allPermissionsGranted = true;
         }
     }
 
-    private void checkCameraPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 1);
+    private void setupSpeechRecognizer() {
+        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
+
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        if (speechRecognizer != null) {
+            speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override public void onReadyForSpeech(Bundle params) {
+                    isListening = true;
+                    Toast.makeText(MainActivity.this, "Prêt à écouter", LENGTH_SHORT).show();
+                }
+                @Override public void onBeginningOfSpeech() {}
+                @Override public void onRmsChanged(float rmsdB) {}
+                @Override public void onBufferReceived(byte[] buffer) {}
+                @Override public void onEndOfSpeech() {
+                    isListening = false;
+                }
+                @Override public void onError(int error) {
+                    isListening = false;
+                    Toast.makeText(MainActivity.this, "Veuillez répéter", LENGTH_LONG).show();
+                }
+                @Override public void onResults(Bundle results) {
+                    isListening = false;
+                    ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (matches != null && !matches.isEmpty()) {
+                        String recognizedText = matches.get(0);
+                        processUserInput(recognizedText);
+                    }
+                }
+                @Override public void onPartialResults(Bundle partialResults) {}
+                @Override public void onEvent(int eventType, Bundle params) {}
+            });
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        // C'est la fonction qui verifie les permissions : du micro, du camera
+        // ce sont les deux capteurs que nous avons utilisé pour le projet
+
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            boolean allGranted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            allPermissionsGranted = allGranted;
+
+            if (allGranted) {
+                startCamera();
+                setupSpeechRecognizer();
+            } else {
+                boolean shouldShowRationale = false;
+                for (String permission : permissions) {
+                    if (!ActivityCompat.shouldShowRequestPermissionRationale(this, permission)) {
+                        shouldShowRationale = true;
+                        break;
+                    }
+                }
+
+                if (shouldShowRationale) {
+                    new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("Permissions requises")
+                        .setMessage("Pour utiliser l'application, vous devez activer les permissions dans les paramètres de l'application.")
+                        .setPositiveButton("Ouvrir les paramètres", (dialog, which) -> {
+                            Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                            intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        })
+                        .setNegativeButton("Quitter", (dialog, which) -> finish())
+                        .setCancelable(false)
+                        .show();
+                } else {
+                    // L'utilisateur a simplement refusé cette fois
+                    new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("Permissions nécessaires")
+                        .setMessage("Ces permissions sont nécessaires pour le fonctionnement de l'application. Voulez-vous réessayer ?")
+                        .setPositiveButton("Réessayer", (dialog, which) -> checkPermissions())
+                        .setNegativeButton("Quitter", (dialog, which) -> finish())
+                        .setCancelable(false)
+                        .show();
+                }
+            }
         }
     }
 
     private void startListening() {
-        speechRecognizer.startListening(recognizerIntent);
+        if (!allPermissionsGranted) {
+            Toast.makeText(this, "Veuillez accorder toutes les permissions nécessaires", Toast.LENGTH_LONG).show();
+            checkPermissions();
+            return;
+        }
+        
+        // Arrêter la synthèse vocale si elle est en cours
+        if (tts != null) {
+            tts.stop();
+        }
+        
+        if (speechRecognizer != null) {
+            speechRecognizer.startListening(recognizerIntent);
+        }
     }
 
     private void stopListening() {
-        speechRecognizer.stopListening();
+        if (speechRecognizer != null) {
+            speechRecognizer.stopListening();
+        }
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (speechRecognizer != null) speechRecognizer.destroy();
-        if (labeler != null) {
-            try {
-                labeler.close();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+        if (speechRecognizer != null) {
+            speechRecognizer.destroy();
+        }
+        if (objectDetector != null) {
+            objectDetector.close();
         }
         if (tts != null) {
             tts.stop();
@@ -191,153 +279,236 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startCamera() {
-        bindCameraUseCases();
+        try {
+            bindCameraUseCases();
+        } catch (Exception e) {
+            Log.e(TAG, "Erreur lors du démarrage de la caméra: " + e.getMessage(), e);
+            Toast.makeText(this, "Erreur caméra: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void bindCameraUseCases() {
         try {
-            ProcessCameraProvider provider = ProcessCameraProvider.getInstance(this).get();
-            Preview preview = new Preview.Builder()
-                    .setTargetResolution(new Size(1280,720))
-                    .build();
-            preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
+            ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+            cameraProviderFuture.addListener(() -> {
+                try {
+                    ProcessCameraProvider provider = cameraProviderFuture.get();
+                    Preview preview = new Preview.Builder()
+                            .setTargetResolution(new Size(1280, 720))
+                            .build();
+                    preview.setSurfaceProvider(viewFinder.getSurfaceProvider());
 
-            imageCapture = new ImageCapture.Builder()
-                    .setTargetResolution(new Size(1280,720))
-                    .build();
+                    imageCapture = new ImageCapture.Builder()
+                            .setTargetResolution(new Size(1280, 720))
+                            .build();
 
-            provider.unbindAll();
-            provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture);
+                    provider.unbindAll();
+                    provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture);
+                    Log.d(TAG, "Caméra démarrée avec succès");
+                } catch (Exception e) {
+                    Log.e(TAG, "Erreur lors de la configuration de la caméra", e);
+                    Toast.makeText(MainActivity.this, "Erreur caméra: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }, ContextCompat.getMainExecutor(this));
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Erreur lors du démarrage asynchrone de la caméra: " + e.getMessage(), e);
         }
     }
 
     private void captureFrameAndDetect() {
-        Toast.makeText(MainActivity.this, "Analyse de l'image...", Toast.LENGTH_SHORT).show();
         if (imageCapture != null) {
+            // Tableau de phrases d'introduction variées
+            String[] startPhrases = {
+                "D'accord, je vais analyser la scène.",
+                "Un instant, j'analyse la scène.",
+                "Je vais vous dire ce que j'aperçois."
+            };
+            // Sélection aléatoire d'une phrase
+            String startPhrase = startPhrases[(int) (Math.random() * startPhrases.length)];
+            tts.speak(startPhrase, TextToSpeech.QUEUE_FLUSH, null, null);
+
             imageCapture.takePicture(
                     ContextCompat.getMainExecutor(this),
                     new ImageCapture.OnImageCapturedCallback() {
                         @Override
                         public void onCaptureSuccess(@NonNull ImageProxy imageProxy) {
-                            Toast.makeText(MainActivity.this, "Capture réussie", Toast.LENGTH_SHORT).show();
                             analyzeSingleImage(imageProxy);
                         }
                         @Override
                         public void onError(@NonNull ImageCaptureException e) {
-                            e.printStackTrace();
-                            Toast.makeText(MainActivity.this, "Erreur capture", Toast.LENGTH_SHORT).show();
+                            Log.e(TAG, "Erreur lors de la capture", e);
+                            tts.speak("Désolé, je n'ai pas pu prendre la photo correctement.", 
+                                    TextToSpeech.QUEUE_FLUSH, null, null);
                         }
                     });
         }
-    }
-
-    private void parlerLabels(List<ImageLabel> labels) {
-        if (labels == null || labels.isEmpty()) return;
-
-        StringBuilder texte = new StringBuilder(" I see : ");
-        int nbLabels = Math.min(3, labels.size()); // limite à 3 objets pour plus de clarté
-
-        for (int i = 0; i < nbLabels; i++) {
-            texte.append(labels.get(i).getText());
-            if (i < nbLabels - 1) {
-                texte.append(", ");
-            }
-        }
-        // Ajouter la réponse au buffer de conversation
-        Message assistantMessage = new Message("assistant", texte.toString());
-        conversationBuffer.addMessage(assistantMessage);
-        
-        // Utilise TTS pour parler
-        tts.speak(texte.toString(), TextToSpeech.QUEUE_FLUSH, null, null);
     }
 
     private void processUserInput(String userInput) {
-        // Ajouter l'entrée utilisateur au buffer
+        // Ici, pour une question d'optimisation de tokken nous avons decidé de lister
+        //  les comande evident qui vont demander la detection d'objet,
+        //  pour ne plus passer vers le  model LLM de OpenAi
+        List<String> detectionCommands = Arrays.asList(
+            "que vois-tu",
+            "qu'est-ce que tu vois",
+            "what do you see",
+            "que vois tu",
+            "qu'est ce que tu vois",
+            "montre moi",
+            "décris ce que tu vois",
+            "décris moi",
+            "décris-moi",
+            "que peux-tu voir",
+            "dis-moi ce que tu vois",
+            "dis moi ce que tu vois",
+            "vois-tu",
+            "peux-tu me montrer",
+            "analyse",
+            "regarde",
+            "observe"
+        );
+        String userInputLower = userInput.toLowerCase().trim();
+        boolean isDirectDetectionCommand = detectionCommands.stream()
+            .anyMatch(cmd -> userInputLower.contains(cmd.toLowerCase()));
+
+        if (isDirectDetectionCommand) {
+            runOnUiThread(() -> captureFrameAndDetect());
+            return;
+        }
+
+        // Si ce n'est pas une commande directe, c'est là qu'on asse la commande vers le LLM
         Message userMessage = new Message("user", userInput);
         conversationBuffer.addMessage(userMessage);
 
-        // Analyser la commande avec OpenAI
-        openAIManager.analyzeCommand(userInput, conversationBuffer.getContextForAI(), 
-            new OpenAIManager.CommandAnalysisCallback() {
-                @Override
-                public void onAnalysisComplete(String response, boolean isDetection) {
-                    runOnUiThread(() -> {
-                        if (isDetection) {
-                            // Si c'est une demande de détection, activer ML Kit
-                            captureFrameAndDetect();
-                        } else {
-                            // Sinon, c'est une conversation normale
-                            Message assistantMessage = new Message("assistant", response);
-                            conversationBuffer.addMessage(assistantMessage);
+        // Utiliser OpenAI directement pour une conversation naturelle
+        openAIManager.generateResponse(userInput, conversationBuffer.getContextForAI(),
+                new OpenAIManager.ResponseCallback() {
+                    @Override
+                    public void onResponseReady(String response) {
+                        runOnUiThread(() -> {
+                            String cleanResponse = response
+                                .replaceAll("^[\"']*|[\"']*$", "") // Enlève les guillemets
+                                .trim();
                             
-                            // Répondre vocalement
-                            tts.speak(response, TextToSpeech.QUEUE_FLUSH, null, null);
-                        }
-                    });
-                }
+                            Message assistantMessage = new Message("assistant", cleanResponse);
+                            conversationBuffer.addMessage(assistantMessage);
+                            tts.speak(cleanResponse, TextToSpeech.QUEUE_FLUSH, null, null);
+                        });
+                    }
 
-                @Override
-                public void onError(String error) {
-                    runOnUiThread(() -> {
-                        Toast.makeText(MainActivity.this, "Erreur: " + error, Toast.LENGTH_LONG).show();
-                    });
-                }
-            });
+                    @Override
+                    public void onError(String error) {
+                        runOnUiThread(() -> {
+                            Log.e(TAG, "Erreur OpenAI: " + error);
+                            tts.speak("Désolé, je n'ai pas bien compris. Pouvez-vous répéter?", 
+                                    TextToSpeech.QUEUE_FLUSH, null, null);
+                        });
+                    }
+                });
     }
 
     private void analyzeSingleImage(final ImageProxy imageProxy) {
-        if (labeler == null) {
-            Toast.makeText(MainActivity.this, "Labeler non initialisé", Toast.LENGTH_SHORT).show();
+        if (objectDetector == null) {
+            Toast.makeText(MainActivity.this, "Détecteur non initialisé", Toast.LENGTH_SHORT).show();
             imageProxy.close();
             return;
         }
 
         try {
-            if (imageProxy.getImage() == null) {
-                Toast.makeText(MainActivity.this, "Image invalide", Toast.LENGTH_SHORT).show();
-                imageProxy.close();
-                return;
+            List<ObjectDetector.DetectionResult> detectionResults = objectDetector.detect(imageProxy);
+
+            if (detectionResults.isEmpty()) {
+                Toast.makeText(MainActivity.this, "Aucun objet détecté", Toast.LENGTH_LONG).show();
+            } else {
+                StringBuilder result = new StringBuilder();
+                List<String> detectedLabels = new ArrayList<>();
+
+                int count = Math.min(3, detectionResults.size());
+                for (int i = 0; i < count; i++) {
+                    ObjectDetector.DetectionResult detection = detectionResults.get(i);
+                    result.append(detection.label)
+                            .append(" (")
+                            .append(String.format("%.0f%%", detection.confidence * 100))
+                            .append(")");
+                    if (i < count - 1) result.append(", ");
+
+                    detectedLabels.add(detection.label);
+                }
+
+                Log.d(TAG, "Objets détectés: " + result);
+                parlerDetections(detectedLabels);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Erreur lors de l'analyse", e);
+            Toast.makeText(MainActivity.this, "Erreur: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        } finally {
+            imageProxy.close();
+        }
+    }
+
+    private void parlerDetections(List<String> labels) {
+        // Cette fonction va servir de passer les label venant du tensorflow Lite
+        // Le model va juste construire une phrase pour etre plus naturelle que au lieu d'avoir
+        // une phrase statique à chaque fois
+
+        if (labels == null || labels.isEmpty()) {
+            tts.speak("Je ne vois rien de particulier pour le moment.", TextToSpeech.QUEUE_FLUSH, null, null);
+            return;
+        }
+
+        // Construction de la liste des objets
+        StringBuilder labelsList = new StringBuilder();
+        for (int i = 0; i < labels.size(); i++) {
+            labelsList.append(labels.get(i));
+            if (i < labels.size() - 2) {
+                labelsList.append(", ");
+            } else if (i == labels.size() - 2) {
+                labelsList.append(" et ");
+            }
+        }
+
+        // Voici un prompt de pour dire au model formuler une phrase de réponse
+        String prompt = "Tu vois les objets suivants : " + labelsList.toString() + 
+                       ". Formule UNE SEULE phrase simple en français pour décrire UNIQUEMENT ce que tu vois. " +
+                       "La phrase doit commencer par 'Je vois' ou 'J'aperçois'. " +
+                       "Ne réponds que par cette phrase. Pas de ponctuation finale. Pas d'explication.";
+
+        openAIManager.analyzeCommand(prompt, "", new OpenAIManager.CommandAnalysisCallback() {
+            @Override
+            public void onAnalysisComplete(String response, boolean isDetection) {
+                runOnUiThread(() -> {
+                    String cleanResponse = response
+                        .replaceAll("^[\"']*|[\"']*$", "")
+                        .replaceAll("Réponse\\s*:\\s*", "")
+                        .replaceAll("(?i)détect.*?:", "")
+                        .replaceAll("(?i)voici.*?:", "")
+                        .replaceAll("\\s+", " ")
+                        .trim();
+                    
+                    // Enlève la ponctuation finale si présente
+                    if (cleanResponse.endsWith(".")) {
+                        cleanResponse = cleanResponse.substring(0, cleanResponse.length() - 1);
+                    }
+                    
+                    // Si la réponse est vide ou trop courte, utiliser une réponse de base
+                    if (cleanResponse.isEmpty() || cleanResponse.length() < 5) {
+                        cleanResponse = "Je vois " + labelsList.toString();
+                    }
+
+                    Message assistantMessage = new Message("assistant", cleanResponse);
+                    conversationBuffer.addMessage(assistantMessage);
+                    tts.speak(cleanResponse, TextToSpeech.QUEUE_FLUSH, null, null);
+                });
             }
 
-            InputImage image = InputImage.fromMediaImage(
-                    imageProxy.getImage(),
-                    imageProxy.getImageInfo().getRotationDegrees()
-            );
-
-            labeler.process(image)
-                    .addOnSuccessListener(labels -> {
-                        if (labels.isEmpty()) {
-                            Toast.makeText(MainActivity.this, "Aucun objet détecté", Toast.LENGTH_LONG).show();
-                        } else {
-                            StringBuilder result = new StringBuilder();
-
-                            // Prenez les 3 premiers labels les plus probables
-                            int count = Math.min(3, labels.size());
-                            for (int i = 0; i < count; i++) {
-                                ImageLabel label = labels.get(i);
-                                result.append(label.getText())
-                                        .append(" (")
-                                        .append(String.format("%.0f%%", label.getConfidence() * 100))
-                                        .append(")");
-                                if (i < count - 1) result.append(", ");
-                            }
-
-                            Log.d("ImageLabeling", "Labels détectés: " + result.toString());
-//                            Toast.makeText(MainActivity.this, "Je vois: " + result, Toast.LENGTH_LONG).show();
-                            parlerLabels(labels);
-                        }
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.e("ImageLabeling", "Erreur de détection", e);
-                        Toast.makeText(MainActivity.this, "Erreur: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    })
-                    .addOnCompleteListener(task -> imageProxy.close());
-        } catch (Exception e) {
-            Log.e("ImageLabeling", "Erreur lors de l'analyse", e);
-            imageProxy.close();
-            Toast.makeText(MainActivity.this, "Erreur: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+            @Override
+            public void onError(String error) {
+                runOnUiThread(() -> {
+                    // Fallback en cas d'erreur
+                    String fallbackText = "Je vois " + labelsList.toString();
+                    tts.speak(fallbackText, TextToSpeech.QUEUE_FLUSH, null, null);
+                });
+            }
+        });
     }
 }

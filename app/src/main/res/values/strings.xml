@@ -1,3 +1,12 @@
 <resources>
-    <string name="app_name">G-micro</string>
+    <string name="app_name">G-Micro</string>
+    <string name="app_tagline">Assistant IA avec détection d\'objets</string>
+    <string name="button_listen">Écouter</string>
+    <string name="button_stop">Arrêter</string>
+    <string name="hint_text">Cliquez sur \'Écouter\' pour commencer une conversation</string>
+    <string name="ready_to_listen">Prêt à écouter</string>
+    <string name="analyzing_image">Analyse de l\'image...</string>
+    <string name="no_object_detected">Aucun objet détecté</string>
+    <string name="please_repeat">Veuillez répéter</string>
+    <string name="error_capture">Erreur lors de la capture</string>
 </resources>

@@ -8,6 +8,7 @@
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <meta-data
         android:name="com.google.mlkit.vision.DEPENDENCIES"
@@ -17,22 +18,28 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/logo_app"
+        android:icon="@mipmap/icone_app"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/logo_app_foreground"
+        android:roundIcon="@mipmap/icone_app_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Projet"
         tools:targetApi="31">
 
+        <!-- Splash Screen Activity - Point d'entrée de l'application -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true">
+            android:name=".SplashScreenActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Projet.SplashScreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
-             </intent-filter>
+            </intent-filter>
         </activity>
+
+        <!-- Main Activity -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true" />
     </application>
 
 </manifest>

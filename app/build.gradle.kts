@@ -42,12 +42,16 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
 
     //CaméraX
-    implementation("androidx.camera:camera-camera2:1.2.0")
-    implementation("androidx.camera:camera-lifecycle:1.2.0")
-    implementation("androidx.camera:camera-view:1.0.0-alpha27")
+    implementation("androidx.camera:camera-camera2:1.3.1")
+    implementation("androidx.camera:camera-lifecycle:1.3.1")
+    implementation("androidx.camera:camera-view:1.3.1")
 
-    // ML Kit Image Labeling (au lieu d'Object Detection)
-    implementation("com.google.mlkit:image-labeling:17.0.8")
+    // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-metadata:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")  // Support GPU optionnel
+    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
 
     // Retrofit pour les appels API REST
     implementation("com.squareup.retrofit2:retrofit:2.9.0")

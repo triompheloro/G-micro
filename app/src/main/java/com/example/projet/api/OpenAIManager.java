@@ -94,8 +94,55 @@ public class OpenAIManager {
         });
     }
 
+    public void generateResponse(String userInput, String context, ResponseCallback callback) {
+        List<OpenAIRequest.Message> messages = new ArrayList<>();
+        
+        // System prompt pour une conversation naturelle et amicale
+        messages.add(new OpenAIRequest.Message("system", 
+            "Tu es un assistant IA conversationnel amical et naturel. " +
+            "Réponds de façon courte et naturelle en français, comme si tu parlais à un ami. " +
+            "Évite les réponses trop longues ou formelles. Sois concis et direct."));
+        
+        // Ajouter le contexte si disponible
+        if (context != null && !context.isEmpty()) {
+            messages.add(new OpenAIRequest.Message("system", "Contexte de la conversation: " + context));
+        }
+        
+        // Ajouter la question de l'utilisateur
+        messages.add(new OpenAIRequest.Message("user", userInput));
+
+        OpenAIRequest request = new OpenAIRequest(messages);
+
+        service.createChatCompletion(request).enqueue(new retrofit2.Callback<OpenAIResponse>() {
+            @Override
+            public void onResponse(retrofit2.Call<OpenAIResponse> call, retrofit2.Response<OpenAIResponse> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    String aiResponse = response.body().getFirstResponse();
+                    if (aiResponse != null) {
+                        callback.onResponseReady(aiResponse);
+                    } else {
+                        callback.onError("Réponse vide de l'API");
+                    }
+                } else {
+                    callback.onError("Erreur: " + response.code());
+                }
+            }
+
+            @Override
+            public void onFailure(retrofit2.Call<OpenAIResponse> call, Throwable t) {
+                Log.e(TAG, "Erreur API", t);
+                callback.onError("Erreur de connexion: " + t.getMessage());
+            }
+        });
+    }
+
     public interface CommandAnalysisCallback {
         void onAnalysisComplete(String response, boolean isDetection);
+        void onError(String error);
+    }
+
+    public interface ResponseCallback {
+        void onResponseReady(String response);
         void onError(String error);
     }
 }
